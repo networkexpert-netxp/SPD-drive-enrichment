@@ -4,8 +4,28 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import os.path
+import json
+import logging
+import sys
+
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
+logger = logging.getLogger(__name__)
+
+# logger.setLevel(logging.INFO)
+logger.info("Starting the script...")
+
+def setup_logging():
+    """ Sets up logging configuration. """
+    logging.basicConfig(
+        filename='myapp.log',
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 def search_files_and_folders(service, folder_id, shared_drive_id, search_string, results):
     """ Recursively searches for files and folders in a Google Drive shared drive that match a given search string.
@@ -48,25 +68,42 @@ def main(search_string):
     Raises:
         HttpError: If an error occurs while accessing the Google Drive API.
     """
+    setup_logging()
+
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'client_secret.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+    try:
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            logger.info("Token loaded successfully.")
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                logger.info("Token refreshed successfully.")
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'client_secret.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+                logger.info("New token created successfully.")
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+                logger.info("Token saved successfully.")
+    except Exception as e:
+        logger.error(f"Error loading credentials: {e}")
+        return
+    logger.info("Credentials loaded successfully.")
 
     try:
         service = build('drive', 'v3', credentials=creds)
-
-        folder_id = FOLDER_ID  # Identyfikator folderu startowego
-        shared_drive_id = SHARED_DRIVE_ID  # Identyfikator Dysku współdzielonego
-
+        if os.path.exists('config.json'):
+            with open("config.json", "r") as config:
+                data = json.load(config)
+                folder_id = data['folder_id']  # Identyfikator folderu startowego
+                shared_drive_id = data['shared_drive_id']  # Identyfikator Dysku współdzielonego
+               # logging.basicConfig(filename='search.log', level=logging.INFO,
+               #                     format='%(asctime)s - %(levelname)s - %(message)s')
+        else:
+            logger.error("Nie znaleziono pliku konfiguracyjnego config.json.")
+            return
         results = []
         search_files_and_folders(service,
                                  folder_id,
@@ -74,13 +111,13 @@ def main(search_string):
                                  search_string,
                                  results)
         if not results:
-            print('Nie znaleziono pasujących plików ani folderów.')
+            logger.info('Nie znaleziono pasujących plików ani folderów.')
         else:
             for item in results:
-                print(f"Nazwa: {item['name']}, Link: {item.get('webViewLink')}") # wyświetlenie linku
+                logger.info(f"{item['name']}, Link: {item.get('webViewLink')}") # wyświetlenie linku
 
     except HttpError as error:
-        print(f'Wystąpił błąd: {error}')
+        logger.error(f'Wystąpił błąd HTTP: {error}')
 
 
 if __name__ == '__main__':

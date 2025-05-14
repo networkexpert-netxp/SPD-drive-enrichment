@@ -64,8 +64,8 @@ def main(search_string):
     try:
         service = build('drive', 'v3', credentials=creds)
 
-        folder_id = '1cvV_tUM1qkW14mZNDiPeh6MHsbeagRSX'  # Identyfikator folderu startowego
-        shared_drive_id = '0AIINzgMQ695kUk9PVA'  # Identyfikator Dysku współdzielonego
+        folder_id = FOLDER_ID  # Identyfikator folderu startowego
+        shared_drive_id = SHARED_DRIVE_ID  # Identyfikator Dysku współdzielonego
 
         results = []
         search_files_and_folders(service,

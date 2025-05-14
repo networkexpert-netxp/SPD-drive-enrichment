@@ -1,124 +1,171 @@
+import requests
+import json
+import sys
+import os
+import logging
+from datetime import datetime
+from requests.exceptions import HTTPError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import os.path
-import json
-import logging
-import sys
+from datetime import datetime, timedelta
+from driveSearch import drive_main
 
+# Disable SSL certificate warnings for insecure requests (self-signed certificates)
+requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+# Set up logging configuration
+log_file_path = "debug.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file_path),  # Write logs to a file
+        logging.StreamHandler()  # Output logs to the console
+    ]
+)
 logger = logging.getLogger(__name__)
-
-# logger.setLevel(logging.INFO)
 logger.info("Starting the script...")
 
-def setup_logging():
-    """ Sets up logging configuration. """
-    logging.basicConfig(
-        filename='myapp.log',
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+# Load configuration from config.json
+if os.path.exists('config.json'):
+    with open("config.json", "r") as config:
+        data = json.load(config)
+        API_URL = data['API_URL']  # Identyfikator folderu startowego
+        API_KEY = data['API_KEY']  # Identyfikator Dysku współdzielonego
 
-def search_files_and_folders(service, folder_id, shared_drive_id, search_string, results):
-    """ Recursively searches for files and folders in a Google Drive shared drive that match a given search string.
-        service (googleapiclient.discovery.Resource): The Google Drive API service instance.
-        folder_id (str): The ID of the folder to search within.
-        shared_drive_id (str): The ID of the shared drive.
-        search_string (str): The string to search for in file and folder names.
-        results (list): A list to store the search results. Each result is a dictionary containing file/folder details.
-    Returns:
-        None: The results are appended to the provided results list.
-    """
-    query = f"parents = '{folder_id}' and trashed = false"
+# Constants
+ALLOWED_ACCOUNTS = {"BRO", "CC", "GAL", "MJWPU", "PRZ", "SPSK", "TUZ", "UCK"}
+HEADERS = {
+    "Accept": "application/vnd.manageengine.sdp.v3+json",
+    "authtoken": API_KEY,
+    "Content-Type": "application/x-www-form-urlencoded"
+}
 
-    response = service.files().list(
-        q=query,
-        pageSize=1000,
-        fields="nextPageToken, files(id, name, mimeType, webViewLink)",
-        corpora='drive',
-        driveId=shared_drive_id,
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True
-    ).execute()
-
-    items = response.get('files', [])
-
-    for item in items:
-        if search_string.lower() in item['name'].lower():
-            if item['name'].lower().endswith('.png'):
-                continue  # Skip if the search string ends with '.png'
-            else:
-                results.append(item)
-
-        if item['mimeType'] == 'application/vnd.google-apps.folder':
-            search_files_and_folders(service, item['id'], shared_drive_id, search_string, results)
-
-
-def main(search_string):
-    """ Main function to search for files and folders in a Google Drive.
-        search_string (str): The string to search for in file and folder names.
-    Raises:
-        HttpError: If an error occurs while accessing the Google Drive API.
-    """
-    setup_logging()
-
-    creds = None
+def view_full_ticket(ticket_id: int) -> dict:
+    headers = {
+        "Accept": "application/vnd.manageengine.sdp.v3+json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "authtoken": API_KEY
+    }
+    url = f"https://172.24.24.16/api/v3/requests/{ticket_id}"
     try:
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-            logger.info("Token loaded successfully.")
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                logger.info("Token refreshed successfully.")
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'client_secret.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-                logger.info("New token created successfully.")
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-                logger.info("Token saved successfully.")
+        response = requests.get(url, headers=headers, verify=False, timeout=10) # nosec B501
+        response_data = response.json()
+        return response_data
     except Exception as e:
-        logger.error(f"Error loading credentials: {e}")
-        return
-    logger.info("Credentials loaded successfully.")
+        logger.error("Error while trying to view full ticket", ticket_id=ticket_id, error=str(e), exc_info=True)
+        return {}
+
+def fetch_open_requests():
+    """
+    Fetches open requests from the Service Desk API.
+    """
+    input_data = {
+        "list_info": {
+            "row_count": 10000,
+            "start_index": 400,
+            "sort_fields": [{"field": "created_time", "order": "asc"}],
+            "search_criteria": {
+                "field": "status.name",
+                "condition": "is",
+                "values": ["Open"]
+            },
+            "fields_required": ["id", "account.name", "subject", "created_time"]
+        }
+    }
 
     try:
-        service = build('drive', 'v3', credentials=creds)
-        if os.path.exists('config.json'):
-            with open("config.json", "r") as config:
-                data = json.load(config)
-                folder_id = data['folder_id']  # Identyfikator folderu startowego
-                shared_drive_id = data['shared_drive_id']  # Identyfikator Dysku współdzielonego
-               # logging.basicConfig(filename='search.log', level=logging.INFO,
-               #                     format='%(asctime)s - %(levelname)s - %(message)s')
-        else:
-            logger.error("Nie znaleziono pliku konfiguracyjnego config.json.")
-            return
-        results = []
-        search_files_and_folders(service,
-                                 folder_id,
-                                 shared_drive_id,
-                                 search_string,
-                                 results)
-        if not results:
-            logger.info('Nie znaleziono pasujących plików ani folderów.')
-        else:
-            for item in results:
-                logger.info(f"{item['name']}, Link: {item.get('webViewLink')}") # wyświetlenie linku
+        response = requests.get(
+            API_URL,
+            headers=HEADERS,
+            params={"input_data": json.dumps(input_data)},
+            verify=False
+        )
+        response.raise_for_status()
+        return response.json().get("requests", [])
+    except HTTPError as e:
+        logging.error(f"Failed to fetch open requests: {e.response.text}")
+        return []
+    except Exception as e:
+        logging.error(f"Unexpected error fetching open requests: {e}")
+        return []
 
-    except HttpError as error:
-        logger.error(f'Wystąpił błąd HTTP: {error}')
+def addDriveLinks(request_id, drive_links):
+    """
+    Adds drive links to the request in the Service Desk API.
+    """
+    reassign_data = {
+        "request": {
+            "udf_fields": {"udf_mline_2101": drive_links}
+        }
+    }
+
+    try:
+        response = requests.put(
+            f"{API_URL}/{request_id}",
+            headers=HEADERS,
+            data={"input_data": json.dumps(reassign_data)},
+            verify=False
+        )
+        response.raise_for_status()
+        logging.info(f"Successfully added links to Request ID {request_id}.")
+    
+    except HTTPError as e:
+        logging.error(f"Failed to add links to Request ID {request_id}")
+    except Exception as e:
+        logging.error(f"Unexpected error Request ID {request_id}: {e}")
 
 
-if __name__ == '__main__':
-    main(search_string='First Time Seen Driver Loaded')
+def main():
+    """
+    Processes all open requests and add drive links.
+    """
+    requests_list = fetch_open_requests()
+    print(requests_list)
+
+    for request in requests_list:
+        try:
+            account_data = request.get("account")
+            request_id = request.get("id")
+            created_time = int(request.get('created_time')['value']) / 1000
+            created_time = datetime.fromtimestamp(created_time).strftime('%d.%m.%Y')
+            today_date = datetime.now().strftime('%d.%m.%Y')
+            if today_date != created_time:
+                continue
+            if isinstance(account_data, dict):
+                client_name = account_data.get("name")
+            else:
+                client_name = None
+            if client_name and client_name.startswith("SOC - "):
+                client_name = client_name.replace("SOC - ", "", 1)
+
+            if client_name not in ALLOWED_ACCOUNTS:
+                logging.warning(f"Skipping Request ID {request_id}, account '{client_name}' is not in the allowed list.")
+                continue        
+            subject = request.get("subject")
+            subject = subject[5:].strip().removesuffix('[UPDATED]').removeprefix('NETXP')
+            results = drive_main(subject) # Call the drive search function based on the subject name
+            if not results:
+                logging.warning(f"No results found for Request ID {request_id} with subject '{subject}'.")
+                continue
+            else:
+                logging.info(f"Found {len(results)} results for Request ID {request_id} with subject '{subject}'.")
+                print(results)
+                addDriveLinks(request_id, results)
+
+      #     print("\n")
+      #     print(subject)
+      #     print("\n")
+            logging.info(f"Processed Request ID {request_id} for account '{client_name}' with subject '{subject}'.")
+        except Exception as e:
+            logging.error(f"Error processing request ID {request_id}: {e}")
+            continue
+if __name__ == "__main__":
+    logger.info("Fetching open requests...")
+ #   print(view_full_ticket(2911))
+    main()
+    logger.info("Finished processing requests.")

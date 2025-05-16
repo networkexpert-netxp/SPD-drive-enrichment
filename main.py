@@ -74,7 +74,7 @@ def fetch_open_requests():
                 "condition": "is",
                 "values": ["Open"]
             },
-            "fields_required": ["id", "account.name", "subject", "created_time"]
+            "fields_required": ["id", "account.name", "subject", "created_time", "description"]
         }
     }
 
@@ -94,13 +94,14 @@ def fetch_open_requests():
         logging.error(f"Unexpected error fetching open requests: {e}")
         return []
 
-def addDriveLinks(request_id, drive_links):
+def addDriveLinks(request_id, final_description): #drive_links, 
     """
     Adds drive links to the request in the Service Desk API.
     """
     reassign_data = {
         "request": {
-            "udf_fields": {"udf_mline_2101": drive_links}
+  #          "udf_fields": {"udf_mline_2101": drive_links},
+            "description": final_description
         }
     }
 
@@ -131,10 +132,14 @@ def main():
         try:
             account_data = request.get("account")
             request_id = request.get("id")
+            request_description = request.get("description")
             created_time = int(request.get('created_time')['value']) / 1000
             created_time = datetime.fromtimestamp(created_time).strftime('%d.%m.%Y')
             today_date = datetime.now().strftime('%d.%m.%Y')
             if today_date != created_time:
+                continue
+            if "Podobne raporty:" in request_description:
+                logging.info(f"Skipping Request ID {request_id}, already processed.")
                 continue
             if isinstance(account_data, dict):
                 client_name = account_data.get("name")
@@ -149,17 +154,16 @@ def main():
             subject = request.get("subject")
             subject = subject[5:].strip().removesuffix('[UPDATED]').removeprefix('NETXP')
             results = drive_main(subject) # Call the drive search function based on the subject name
+            results = "".join(results)
             if not results:
                 logging.warning(f"No results found for Request ID {request_id} with subject '{subject}'.")
                 continue
             else:
-                logging.info(f"Found {len(results)} results for Request ID {request_id} with subject '{subject}'.")
-                print(results)
-                addDriveLinks(request_id, results)
+                logging.info(f"Found results for Request ID {request_id} with subject '{subject}'.")
 
-      #     print("\n")
-      #     print(subject)
-      #     print("\n")
+                final_description = f"{request_description}<br>Podobne raporty:{results}"
+                addDriveLinks(request_id, final_description)
+
             logging.info(f"Processed Request ID {request_id} for account '{client_name}' with subject '{subject}'.")
         except Exception as e:
             logging.error(f"Error processing request ID {request_id}: {e}")

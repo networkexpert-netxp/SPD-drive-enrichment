@@ -102,8 +102,8 @@ def drive_main(search_string):
                 logger.info(f"{item['name']}, Link: {item.get('webViewLink')}") # wyświetlenie linku
                 nazwa = item['name']
                 link = item.get('webViewLink') # Używamy get(), aby uniknąć błędu, jeśli 'webViewLink' nie istnieje
-               # link_test = f"<br><a href='{link_raw}'>Link do Drive</a>"
-                result_slim.append({nazwa: link})
+                link_html = f"<br><a href='{link}'>{nazwa}</a>"
+                result_slim.append(link_html)
         logger.info("Drive search completed.")
         return result_slim
 
